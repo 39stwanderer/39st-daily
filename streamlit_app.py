@@ -25,8 +25,7 @@ SLAVE_PASSWORD = st.secrets["slave_login"]["password"]
 # ─── Google Sheets connection ───
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# ─── Data loading ───
-@st.cache_data(ttl=300)  # 5 min refresh
+# ─── Data loading (no cache for real-time updates) ───
 def load_data():
     df = conn.read(worksheet=0, usecols=[0,1,2,3,4,5,6,7], header=0)
     if df.empty:
@@ -53,6 +52,10 @@ current_day = int(max_day + 1)
 if st.session_state.page == "home":
     st.title("Slave Daily Training Dashboard")
 
+    # ─── Manual refresh button ───
+    if st.button("🔄 Refresh Data"):
+        st.rerun()
+
     # ─── Stats section ───
     st.subheader("Fun Stats")
     col1, col2, col3 = st.columns(3)
@@ -66,10 +69,9 @@ if st.session_state.page == "home":
     else:
         st.info("No completed tasks yet.")
 
-    # ─── All Tasks Table ─── (restored)
+    # ─── All Tasks Table ───
     st.subheader("All Tasks")
     if not df.empty:
-        # Optional: color completed rows
         def highlight_completed(row):
             return ['background-color: #d4edda' if row["Status"] == "Completed" else '' for _ in row]
 
@@ -139,7 +141,7 @@ elif st.session_state.page == "add":
         # ─── Linked sliders (no toggles) ───
         st.subheader("Intensity Settings")
 
-        # Use session state to sync sliders bidirectionally
+        # Init session state if needed
         if 'mins_value' not in st.session_state:
             st.session_state.mins_value = 10
         if 'tugs_value' not in st.session_state:
@@ -161,27 +163,27 @@ elif st.session_state.page == "add":
                 step=10, key="tugs_slider"
             )
 
-        # Sync: when one changes, update the other
+        # Sync sliders (check for change and update the other)
+        updated = False
         if mins != st.session_state.mins_value:
             ratio = (mins - 5) / 10.0
-            new_tugs = int(600 - ratio * 300)
-            st.session_state.tugs_value = new_tugs
+            st.session_state.tugs_value = int(600 - ratio * 300)
             st.session_state.mins_value = mins
-            st.rerun()  # force refresh to show updated slider
-
-        elif tugs != st.session_state.tugs_value:
+            updated = True
+        if tugs != st.session_state.tugs_value:
             ratio = (tugs - 300) / 300.0
-            new_mins = int(15 - ratio * 10)
-            st.session_state.mins_value = new_mins
+            st.session_state.mins_value = int(15 - ratio * 10)
             st.session_state.tugs_value = tugs
-            st.rerun()
+            updated = True
+
+        if updated:
+            st.rerun()  # Single rerun if any change
 
         reddit_user = st.text_input("Reddit username (optional)")
 
         submitted = st.form_submit_button("Submit training", type="primary", use_container_width=True)
 
         if submitted:
-            # Use current synced values
             mins_final = st.session_state.mins_value
             tugs_final = st.session_state.tugs_value
 
@@ -197,7 +199,7 @@ elif st.session_state.page == "add":
             }
 
             new_row_df = pd.DataFrame([new_row_dict])
-            current_df = load_data()
+            current_df = load_data()  # Fresh load (no cache)
             updated_df = pd.concat([current_df, new_row_df], ignore_index=True)
 
             # ─── SAVE ───
@@ -206,12 +208,11 @@ elif st.session_state.page == "add":
             st.success(f"Training added for Day {current_day}!")
             st.balloons()
 
-            # Reset sliders for next use & go home
+            # Reset sliders & go home with fresh data
             st.session_state.mins_value = 10
             st.session_state.tugs_value = 450
             st.session_state.page = "home"
-            load_data.clear()
-            st.rerun()
+            st.rerun()  # Immediate refresh
 
     if st.button("← Back to Dashboard"):
         st.session_state.page = "home"
