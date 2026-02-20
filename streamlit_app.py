@@ -1,22 +1,31 @@
 import streamlit as st
 from components.auth import init_auth
-from pages.home import main as home_main
-from pages.add_training import main as add_main
 
-init_auth()
+init_auth()   # your session state setup
 
-# Define pages
-home_page    = st.Page(home_main, title="Dashboard", icon="🏠", default=True)
-add_page     = st.Page(add_main,  title="Add Training", icon="➕")
+st.set_page_config(page_title="Slave Training Dashboard", layout="wide")
 
-# Navigation (you control what appears)
+# Define pages (file paths relative to streamlit_app.py)
+home_page = st.Page(
+    "pages/home.py",
+    title="Dashboard",
+    icon="🏠",
+    default=True   # lands here on first load
+)
+
+add_page = st.Page(
+    "pages/add_training.py",
+    title="Add Training",
+    icon="➕"
+)
+
+# Grouped navigation (optional but clean)
 pg = st.navigation({
-    "Main": [home_page],
+    " ": [home_page],           # no header → top level
     "Actions": [add_page]
 })
 
-# Optional: show only if logged in, etc.
-if not st.session_state.logged_in and pg != home_page:  # example
-    pg = home_page
+# Optional: hide sidebar if you don't want auto-navigation
+# pg = st.navigation([home_page, add_page], position="hidden")
 
 pg.run()
