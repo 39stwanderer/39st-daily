@@ -10,7 +10,7 @@ if 'logged_in' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page = "home"
 
-# ─── Simple slave login (credentials from secrets) ───
+# ─── Simple slave login (from secrets) ───
 def login():
     st.session_state.logged_in = True
     st.rerun()
@@ -23,10 +23,10 @@ SLAVE_USERNAME = st.secrets["slave_login"]["username"]
 SLAVE_PASSWORD = st.secrets["slave_login"]["password"]
 
 # ─── Google Sheets connection ───
-conn = st.connection("gsheets", type=GSheetsConnection)  # alias type as string is also accepted
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 # ─── Data loading ───
-@st.cache_data(ttl=300)  # 5 minutes
+@st.cache_data(ttl=300)  # 5 min refresh
 def load_data():
     df = conn.read(worksheet=0, usecols=[0,1,2,3,4,5,6,7], header=0)
     if df.empty:
@@ -57,14 +57,29 @@ if st.session_state.page == "home":
     st.subheader("Fun Stats")
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Completed Tasks", total_completed)
-    col2.metric("Avg Clamped Time", f"{avg_mins:.1f} min" if avg_mins else "—")
-    col3.metric("Avg Tugs", f"{avg_tugs:.0f}" if avg_tugs else "—")
+    col2.metric("Avg Clamped Time", f"{avg_mins:.1f} min" if avg_mins > 0 else "—")
+    col3.metric("Avg Tugs", f"{avg_tugs:.0f}" if avg_tugs > 0 else "—")
 
     st.subheader("Clamp Type Breakdown")
     if not clamp_counts.empty:
         st.bar_chart(clamp_counts)
     else:
         st.info("No completed tasks yet.")
+
+    # ─── All Tasks Table ─── (restored)
+    st.subheader("All Tasks")
+    if not df.empty:
+        # Optional: color completed rows
+        def highlight_completed(row):
+            return ['background-color: #d4edda' if row["Status"] == "Completed" else '' for _ in row]
+
+        st.dataframe(
+            df.style.apply(highlight_completed, axis=1),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("No tasks recorded yet.")
 
     # ─── Add button & daily limit check ───
     today_records = df[df["Day"] == current_day]
@@ -89,7 +104,7 @@ if st.session_state.page == "home":
             st.session_state.page = "add"
             st.rerun()
 
-    # ─── Login / Logout (only show when needed) ───
+    # ─── Login / Logout ───
     if not st.session_state.logged_in:
         with st.expander("Slave Login (to edit tasks)"):
             uname = st.text_input("Username")
@@ -115,74 +130,89 @@ elif st.session_state.page == "add":
         "Plastic clothespins",
         "Metal clothespins",
         "Alligator clips",
-        "4-pronged claw clamps"   # corrected name for consistency
+        "4-pronged claw clamps"
     ]
 
     with st.form("add_task_form", clear_on_submit=True):
         clamp = st.selectbox("Clamp type", clamp_types)
 
+        # ─── Linked sliders (no toggles) ───
+        st.subheader("Intensity Settings")
+
+        # Use session state to sync sliders bidirectionally
+        if 'mins_value' not in st.session_state:
+            st.session_state.mins_value = 10
+        if 'tugs_value' not in st.session_state:
+            st.session_state.tugs_value = 450
+
         col1, col2 = st.columns(2)
-        use_time = col1.toggle("Apply Time (minutes clamped)", value=True)
-        use_tugs  = col2.toggle("Apply Tugs", value=False)
 
-        mins_slider = st.slider(
-            "Clamped time (minutes)",
-            min_value=5, max_value=15, value=10, step=1,
-            disabled=not use_time
-        )
+        with col1:
+            mins = st.slider(
+                "Clamped time (minutes)",
+                min_value=5, max_value=15, value=st.session_state.mins_value,
+                step=1, key="mins_slider"
+            )
 
-        tugs_slider = st.slider(
-            "Number of tugs",
-            min_value=300, max_value=600, value=450, step=10,
-            disabled=not use_tugs
-        )
+        with col2:
+            tugs = st.slider(
+                "Number of tugs",
+                min_value=300, max_value=600, value=st.session_state.tugs_value,
+                step=10, key="tugs_slider"
+            )
+
+        # Sync: when one changes, update the other
+        if mins != st.session_state.mins_value:
+            ratio = (mins - 5) / 10.0
+            new_tugs = int(600 - ratio * 300)
+            st.session_state.tugs_value = new_tugs
+            st.session_state.mins_value = mins
+            st.rerun()  # force refresh to show updated slider
+
+        elif tugs != st.session_state.tugs_value:
+            ratio = (tugs - 300) / 300.0
+            new_mins = int(15 - ratio * 10)
+            st.session_state.mins_value = new_mins
+            st.session_state.tugs_value = tugs
+            st.rerun()
 
         reddit_user = st.text_input("Reddit username (optional)")
 
         submitted = st.form_submit_button("Submit training", type="primary", use_container_width=True)
 
         if submitted:
-            if not use_time and not use_tugs:
-                st.error("Enable at least one: Time or Tugs.")
-            else:
-                mins_final = mins_slider if use_time else 0
-                tugs_final = tugs_slider if use_tugs else 0
+            # Use current synced values
+            mins_final = st.session_state.mins_value
+            tugs_final = st.session_state.tugs_value
 
-                # Auto-scale the missing value
-                if use_time and not use_tugs:
-                    ratio = (mins_final - 5) / 10.0
-                    tugs_final = int(600 - ratio * 300)
-                elif use_tugs and not use_time:
-                    ratio = (tugs_final - 300) / 300.0
-                    mins_final = int(15 - ratio * 10)
+            new_row_dict = {
+                "Day": current_day,
+                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "Clamp Type": clamp,
+                "Minutes": mins_final,
+                "Tugs": tugs_final,
+                "Reddit Username": reddit_user.strip(),
+                "Status": "Pending",
+                "Notes": ""
+            }
 
-                new_row_dict = {
-                    "Day": current_day,
-                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Clamp Type": clamp,
-                    "Minutes": mins_final,
-                    "Tugs": tugs_final,
-                    "Reddit Username": reddit_user.strip(),
-                    "Status": "Pending",
-                    "Notes": ""
-                }
+            new_row_df = pd.DataFrame([new_row_dict])
+            current_df = load_data()
+            updated_df = pd.concat([current_df, new_row_df], ignore_index=True)
 
-                new_row_df = pd.DataFrame([new_row_dict])
-                current_df = load_data()
-                updated_df = pd.concat([current_df, new_row_df], ignore_index=True)
+            # ─── SAVE ───
+            conn.update(worksheet=0, data=updated_df)
 
-                # ─── SAVE LOGIC ───
-                conn.update(worksheet=0, data=updated_df)
+            st.success(f"Training added for Day {current_day}!")
+            st.balloons()
 
-                st.success(f"Training added for Day {current_day}!")
-                st.balloons()
+            # Reset sliders for next use & go home
+            st.session_state.mins_value = 10
+            st.session_state.tugs_value = 450
+            st.session_state.page = "home"
+            load_data.clear()
+            st.rerun()
 
-                # Return to home
-                st.session_state.page = "home"
-                load_data.clear()
-                st.rerun()
-
-    # Back button outside form
     if st.button("← Back to Dashboard"):
         st.session_state.page = "home"
         st.rerun()
