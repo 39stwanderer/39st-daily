@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime
 from utils.data import load_data, save_data, get_current_day
+import pandas as pd
 
 def main():
     df = load_data()
@@ -64,32 +65,39 @@ def main():
         submitted = st.form_submit_button("Submit training", type="primary", use_container_width=True)
 
         if submitted:
-            new_row = {
-                "Day": current_day,
-                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "Clamp Type": clamp,
-                "Minutes": st.session_state.mins_value,
-                "Tugs": st.session_state.tugs_value,
-                "Reddit Username": reddit_user.strip(),
-                "Status": "Pending",
-                "Notes": ""
-            }
+            with st.spinner("Saving training to Google Sheets... Please wait ⏳"):
+                try:
+                    new_row = {
+                        "Day": current_day,
+                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Clamp Type": clamp,
+                        "Minutes": st.session_state.mins_value,
+                        "Tugs": st.session_state.tugs_value,
+                        "Reddit Username": reddit_user.strip(),
+                        "Status": "Pending",
+                        "Notes": ""
+                    }
 
-            updated_df = df.concat([df, df.DataFrame([new_row])], ignore_index=True)
-            save_data(updated_df)
+                    # Make sure df is the latest before appending
+                    df = load_data()   # ← reload fresh just before save (important!)
 
-            st.success(f"Training added for Day {current_day}!")
-            st.balloons()
+                    updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                    save_data(updated_df)
 
-            # Reset
-            st.session_state.mins_value = 10
-            st.session_state.tugs_value = 450
+                    st.success(f"Training added for Day {current_day}!")
+                    st.balloons()
 
-            # Go back to home
-            st.switch_page("pages/home.py")
+                    # Reset sliders
+                    st.session_state.mins_value = 10
+                    st.session_state.tugs_value = 450
 
-    if st.button("← Back to Dashboard", type="secondary"):
-        st.switch_page("pages/home.py")
+                    # Navigate away only after success
+                    st.switch_page("pages/home.py")
+
+                except Exception as e:
+                    st.error(f"Failed to save training: {e}")
+                    st.exception(e)   # shows traceback in expander — good for debugging
+
 
 
 if __name__ == "__main__":
