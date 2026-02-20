@@ -1,12 +1,15 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
+from datetime import datetime, timedelta
 
-# ─── Simple login (only for slave to edit) ───
+# ─── Session state initialization ───
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
+if 'page' not in st.session_state:
+    st.session_state.page = "home"
+
+# ─── Simple slave login (credentials from secrets) ───
 def login():
     st.session_state.logged_in = True
     st.rerun()
@@ -15,24 +18,27 @@ def logout():
     st.session_state.logged_in = False
     st.rerun()
 
-# Load from secrets (will raise error if missing → good for debugging)
 SLAVE_USERNAME = st.secrets["slave_login"]["username"]
 SLAVE_PASSWORD = st.secrets["slave_login"]["password"]
 
-# ─── Connect to Google Sheet ───
-conn = st.connection("gsheets", type=GSheetsConnection)
+# ─── Google Sheets connection ───
+conn = st.connection("gsheets", type="gsheets")  # alias type as string is also accepted
 
-@st.cache_data(ttl=300)  # refresh every 5 min
+# ─── Data loading ───
+@st.cache_data(ttl=300)  # 5 minutes
 def load_data():
     df = conn.read(worksheet=0, usecols=[0,1,2,3,4,5,6,7], header=0)
     if df.empty:
-        df = pd.DataFrame(columns=["Day", "Timestamp", "Clamp Type", "Minutes", "Tugs", "Reddit Username", "Status", "Notes"])
+        df = pd.DataFrame(columns=[
+            "Day", "Timestamp", "Clamp Type", "Minutes", "Tugs",
+            "Reddit Username", "Status", "Notes"
+        ])
     df["Day"] = pd.to_numeric(df["Day"], errors='coerce').fillna(0).astype(int)
     return df.sort_values("Day", ascending=False)
 
 df = load_data()
 
-# ─── Calculate stats for dashboard ───
+# ─── Dashboard stats ───
 completed = df[df["Status"] == "Completed"]
 total_completed = len(completed)
 clamp_counts = completed["Clamp Type"].value_counts()
@@ -40,16 +46,13 @@ avg_mins = completed["Minutes"].mean() if not completed.empty else 0
 avg_tugs = completed["Tugs"].mean() if not completed.empty else 0
 
 max_day = df["Day"].max() if not df.empty else 0
-current_day = max_day + 1   # Next day to assign
+current_day = int(max_day + 1)
 
-# ─── Sidebar navigation ───
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Home", "Add Daily Training"])
-
-if page == "Home":
+# ─── Page routing ───
+if st.session_state.page == "home":
     st.title("Slave Daily Training Dashboard")
 
-    # Fun facts section
+    # ─── Stats section ───
     st.subheader("Fun Stats")
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Completed Tasks", total_completed)
@@ -57,49 +60,51 @@ if page == "Home":
     col3.metric("Avg Tugs", f"{avg_tugs:.0f}" if avg_tugs else "—")
 
     st.subheader("Clamp Type Breakdown")
-    st.bar_chart(clamp_counts)
+    if not clamp_counts.empty:
+        st.bar_chart(clamp_counts)
+    else:
+        st.info("No completed tasks yet.")
 
-    st.subheader("All Tasks")
-    st.dataframe(df.style.apply(lambda row: ['background: lightgreen' if row["Status"] == "Completed" else '' for _ in row], axis=1))
+    # ─── Add button & daily limit check ───
+    today_records = df[df["Day"] == current_day]
+    count_today = len(today_records)
+    MAX_PER_DAY = 10
 
+    if count_today >= MAX_PER_DAY:
+        now = datetime.now()
+        midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        seconds_left = (midnight - now).total_seconds()
+        hours_left = int(seconds_left // 3600)
+        mins_left = int((seconds_left % 3600) // 60)
+        st.warning(
+            f"No more tasks can be added today (already {count_today}/{MAX_PER_DAY}).\n"
+            f"Reset in {hours_left} hours {mins_left} mins."
+        )
+    else:
+        remaining = MAX_PER_DAY - count_today
+        st.info(f"You can still add {remaining} more task{'s' if remaining != 1 else ''} today.")
+
+        if st.button("➕ Add Daily Training", type="primary", use_container_width=True):
+            st.session_state.page = "add"
+            st.rerun()
+
+    # ─── Login / Logout (only show when needed) ───
     if not st.session_state.logged_in:
-        with st.expander("Slave Login (to update statuses)"):
+        with st.expander("Slave Login (to edit tasks)"):
             uname = st.text_input("Username")
             pwd = st.text_input("Password", type="password")
             if st.button("Login"):
                 if uname == SLAVE_USERNAME and pwd == SLAVE_PASSWORD:
                     login()
                 else:
-                    st.error("Wrong credentials")
+                    st.error("Incorrect credentials")
     else:
         st.success("Logged in as Slave")
         if st.button("Logout"):
             logout()
 
-        st.subheader("Edit Tasks (Slave only)")
-        edit_day = st.number_input("Select Day to edit", min_value=1, value=current_day, step=1)
-        edit_row = df[df["Day"] == edit_day]
-        if not edit_row.empty:
-            row = edit_row.iloc[0]
-            new_mins = st.number_input("New Minutes (can only increase or keep)", min_value=int(row["Minutes"]), value=int(row["Minutes"]))
-            new_tugs = st.number_input("New Tugs (can only increase or keep)", min_value=int(row["Tugs"]), value=int(row["Tugs"]))
-            new_status = st.selectbox("Status", ["Pending", "Completed", "Archived"], index=["Pending", "Completed", "Archived"].index(row["Status"]))
-            notes = st.text_input("Notes", value=row.get("Notes", ""))
-
-            if st.button("Update Task"):
-                idx = df[df["Day"] == edit_day].index[0]
-                df.at[idx, "Minutes"] = new_mins
-                df.at[idx, "Tugs"] = new_tugs
-                df.at[idx, "Status"] = new_status
-                df.at[idx, "Notes"] = notes
-                conn.update(worksheet=0, data=df)
-                st.success("Updated!")
-                st.rerun()
-        else:
-            st.info("No task for this day yet.")
-
-elif page == "Add Daily Training":
-    st.title(f"Add Daily Training - Day {current_day}")
+elif st.session_state.page == "add":
+    st.title(f"Add Daily Training – Day {current_day}")
 
     clamp_types = [
         "Metal spiked clover clamps",
@@ -109,62 +114,74 @@ elif page == "Add Daily Training":
         "Plastic clothespins",
         "Metal clothespins",
         "Alligator clips",
-        "4-pronged claw clamps"
+        "4-pronged claw clamps"   # corrected name for consistency
     ]
 
-    with st.form("add_task"):
-        clamp = st.selectbox("Choose clamp type", clamp_types)
+    with st.form("add_task_form", clear_on_submit=True):
+        clamp = st.selectbox("Clamp type", clamp_types)
 
         col1, col2 = st.columns(2)
-        use_time = col1.toggle("Apply Time (clamped minutes)", value=True)
-        use_tugs = col2.toggle("Apply Tugs", value=False)
+        use_time = col1.toggle("Apply Time (minutes clamped)", value=True)
+        use_tugs  = col2.toggle("Apply Tugs", value=False)
 
-        mins = 0
-        tugs = 0
+        mins_slider = st.slider(
+            "Clamped time (minutes)",
+            min_value=5, max_value=15, value=10, step=1,
+            disabled=not use_time
+        )
 
-        if use_time:
-            mins = st.slider("Clamped time (minutes)", 5, 15, 10)
+        tugs_slider = st.slider(
+            "Number of tugs",
+            min_value=300, max_value=600, value=450, step=10,
+            disabled=not use_tugs
+        )
 
-        if use_tugs:
-            # Inverse: more tugs for shorter time
-            tug_slider = st.slider("Intensity (higher = more tugs, shorter effective time)", 300, 600, 450)
-            tugs = tug_slider
+        reddit_user = st.text_input("Reddit username (optional)")
 
-        reddit_user = st.text_input("Your Reddit username (optional)")
-
-        submitted = st.form_submit_button("Submit to Sir")
+        submitted = st.form_submit_button("Submit training", type="primary", use_container_width=True)
 
         if submitted:
             if not use_time and not use_tugs:
-                st.error("Select at least Time or Tugs!")
+                st.error("Enable at least one: Time or Tugs.")
             else:
-                # Prepare the new row as a dict
+                mins_final = mins_slider if use_time else 0
+                tugs_final = tugs_slider if use_tugs else 0
+
+                # Auto-scale the missing value
+                if use_time and not use_tugs:
+                    ratio = (mins_final - 5) / 10.0
+                    tugs_final = int(600 - ratio * 300)
+                elif use_tugs and not use_time:
+                    ratio = (tugs_final - 300) / 300.0
+                    mins_final = int(15 - ratio * 10)
+
                 new_row_dict = {
                     "Day": current_day,
                     "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "Clamp Type": clamp,
-                    "Minutes": mins,
-                    "Tugs": tugs,
-                    "Reddit Username": reddit_user,
+                    "Minutes": mins_final,
+                    "Tugs": tugs_final,
+                    "Reddit Username": reddit_user.strip(),
                     "Status": "Pending",
                     "Notes": ""
                 }
 
-                # Convert to 1-row DataFrame
                 new_row_df = pd.DataFrame([new_row_dict])
-
-                # Load current data (already have df = load_data(), but refresh it here to be safe)
-                current_df = load_data()  # or conn.read(...) directly if you prefer
-
-                # Append the new row
+                current_df = load_data()
                 updated_df = pd.concat([current_df, new_row_df], ignore_index=True)
 
-                # Write back the full updated sheet
+                # ─── SAVE LOGIC ───
                 conn.update(worksheet=0, data=updated_df)
 
-                st.success(f"Added for Day {current_day}! Sir will review.")
+                st.success(f"Training added for Day {current_day}!")
                 st.balloons()
 
-                # Optional: Force reload stats/table on home page by clearing cache or rerunning
-                load_data.clear()  # clears the cache so next load_data() fetches fresh
-                st.rerun()  # or just let user navigate back to home
+                # Return to home
+                st.session_state.page = "home"
+                load_data.clear()
+                st.rerun()
+
+    # Back button outside form
+    if st.button("← Back to Dashboard"):
+        st.session_state.page = "home"
+        st.rerun()
