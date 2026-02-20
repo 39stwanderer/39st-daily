@@ -64,8 +64,10 @@ def main():
 
         submitted = st.form_submit_button("Submit training", type="primary", use_container_width=True)
 
+        # In add_training.py — inside if submitted:
+
         if submitted:
-            with st.spinner("Saving training to Google Sheets... Please wait ⏳"):
+            with st.spinner("Saving training... ⏳"):
                 try:
                     new_row = {
                         "Day": current_day,
@@ -78,25 +80,22 @@ def main():
                         "Notes": ""
                     }
 
-                    # Make sure df is the latest before appending
-                    df = load_data()   # ← reload fresh just before save (important!)
-
-                    updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                    save_data(updated_df)
+                    # Optional: reload just before save to minimize race
+                    df = load_data()
+                    
+                    from utils.data import save_training
+                    save_training(new_row)
 
                     st.success(f"Training added for Day {current_day}!")
                     st.balloons()
 
-                    # Reset sliders
                     st.session_state.mins_value = 10
                     st.session_state.tugs_value = 450
 
-                    # Navigate away only after success
                     st.switch_page("pages/home.py")
 
                 except Exception as e:
-                    st.error(f"Failed to save training: {e}")
-                    st.exception(e)   # shows traceback in expander — good for debugging
+                    st.error(f"Save failed: {str(e)}")
 
 
 
