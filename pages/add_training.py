@@ -75,7 +75,7 @@ def main():
                 "Notes": ""
             }
 
-            updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            updated_df = df.concat([df, df.DataFrame([new_row])], ignore_index=True)
             save_data(updated_df)
 
             st.success(f"Training added for Day {current_day}!")

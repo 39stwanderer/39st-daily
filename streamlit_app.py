@@ -1,14 +1,22 @@
 import streamlit as st
 from components.auth import init_auth
+from pages.home import main as home_main
+from pages.add_training import main as add_main
 
-# Must be first thing
 init_auth()
 
-# Simple routing using switch_page (Streamlit ≥ 1.28)
-# If you're on older version, keep using session_state.page method
+# Define pages
+home_page    = st.Page(home_main, title="Dashboard", icon="🏠", default=True)
+add_page     = st.Page(add_main,  title="Add Training", icon="➕")
 
-if 'page' not in st.session_state:
-    st.session_state.page = "home"
+# Navigation (you control what appears)
+pg = st.navigation({
+    "Main": [home_page],
+    "Actions": [add_page]
+})
 
-# For first load / when no specific page requested
-st.switch_page("pages/home.py")
+# Optional: show only if logged in, etc.
+if not st.session_state.logged_in and pg != home_page:  # example
+    pg = home_page
+
+pg.run()
