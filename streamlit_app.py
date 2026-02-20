@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+from streamlit_gsheets import GSheetsConnection
 
 # ─── Session state initialization ───
 if 'logged_in' not in st.session_state:
@@ -22,7 +23,7 @@ SLAVE_USERNAME = st.secrets["slave_login"]["username"]
 SLAVE_PASSWORD = st.secrets["slave_login"]["password"]
 
 # ─── Google Sheets connection ───
-conn = st.connection("gsheets", type="gsheets")  # alias type as string is also accepted
+conn = st.connection("gsheets", type=GSheetsConnection)  # alias type as string is also accepted
 
 # ─── Data loading ───
 @st.cache_data(ttl=300)  # 5 minutes
