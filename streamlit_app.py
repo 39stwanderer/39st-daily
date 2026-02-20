@@ -15,9 +15,9 @@ def logout():
     st.session_state.logged_in = False
     st.rerun()
 
-# Hardcoded credentials (change these!)
-SLAVE_USERNAME = "slave"
-SLAVE_PASSWORD = "your_secret_password_123"   # ← CHANGE THIS to something only you know
+# Load from secrets (will raise error if missing → good for debugging)
+SLAVE_USERNAME = st.secrets["slave_login"]["username"]
+SLAVE_PASSWORD = st.secrets["slave_login"]["password"]
 
 # ─── Connect to Google Sheet ───
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -138,7 +138,8 @@ elif page == "Add Daily Training":
             if not use_time and not use_tugs:
                 st.error("Select at least Time or Tugs!")
             else:
-                new_row = {
+                # Prepare the new row as a dict
+                new_row_dict = {
                     "Day": current_day,
                     "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "Clamp Type": clamp,
@@ -148,6 +149,22 @@ elif page == "Add Daily Training":
                     "Status": "Pending",
                     "Notes": ""
                 }
-                conn.insert(worksheet=0, row=new_row)
+
+                # Convert to 1-row DataFrame
+                new_row_df = pd.DataFrame([new_row_dict])
+
+                # Load current data (already have df = load_data(), but refresh it here to be safe)
+                current_df = load_data()  # or conn.read(...) directly if you prefer
+
+                # Append the new row
+                updated_df = pd.concat([current_df, new_row_df], ignore_index=True)
+
+                # Write back the full updated sheet
+                conn.update(worksheet=0, data=updated_df)
+
                 st.success(f"Added for Day {current_day}! Sir will review.")
                 st.balloons()
+
+                # Optional: Force reload stats/table on home page by clearing cache or rerunning
+                load_data.clear()  # clears the cache so next load_data() fetches fresh
+                st.rerun()  # or just let user navigate back to home
