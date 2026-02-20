@@ -77,7 +77,7 @@ if st.session_state.page == "home":
 
         st.dataframe(
             df.style.apply(highlight_completed, axis=1),
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
     else:
@@ -102,7 +102,7 @@ if st.session_state.page == "home":
         remaining = MAX_PER_DAY - count_today
         st.info(f"You can still add {remaining} more task{'s' if remaining != 1 else ''} today.")
 
-        if st.button("➕ Add Daily Training", type="primary", use_container_width=True):
+        if st.button("➕ Add Daily Training", type="primary", width="stretch"):
             st.session_state.page = "add"
             st.rerun()
 
@@ -181,7 +181,7 @@ elif st.session_state.page == "add":
 
         reddit_user = st.text_input("Reddit username (optional)")
 
-        submitted = st.form_submit_button("Submit training", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Submit training", type="primary", width="stretch")
 
         if submitted:
             mins_final = st.session_state.mins_value
